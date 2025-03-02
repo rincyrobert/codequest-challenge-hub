@@ -1,13 +1,15 @@
 
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import CodeEditor from '../components/CodeEditor';
 import TestResults from '../components/TestResults';
 import { getChallenge, getChallengeLeaderboard } from '../lib/challengesData';
+import '../styles/Challenge.css';
 
 const Challenge = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const challenge = getChallenge(Number(id));
   const leaderboard = getChallengeLeaderboard(Number(id));
   
@@ -16,12 +18,33 @@ const Challenge = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [timer, setTimer] = useState<number>(0);
+  const [timerRunning, setTimerRunning] = useState<boolean>(false);
+  const [solved, setSolved] = useState<boolean>(false);
+
+  useEffect(() => {
+    // Check if user is logged in
+    const loggedInUser = localStorage.getItem('user');
+    if (!loggedInUser) {
+      navigate('/welcome');
+    }
+  }, [navigate]);
 
   useEffect(() => {
     if (challenge) {
       setCode(challenge.initialCode);
     }
   }, [challenge]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (timerRunning) {
+      interval = setInterval(() => {
+        setTimer(prevTimer => prevTimer + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [timerRunning]);
 
   if (!challenge) {
     return (
@@ -37,6 +60,18 @@ const Challenge = () => {
     );
   }
 
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const startSolving = () => {
+    if (!timerRunning) {
+      setTimerRunning(true);
+    }
+  };
+
   const runTests = () => {
     setIsRunning(true);
     setTestResults([]);
@@ -51,7 +86,7 @@ const Challenge = () => {
         return {
           id: index,
           name: `Test Case ${index + 1}`,
-          status: passed ? 'pass' : 'fail',
+          status: passed ? 'pass' as const : 'fail' as const,
           message: passed ? undefined : 'Expected output did not match.'
         };
       });
@@ -70,7 +105,27 @@ const Challenge = () => {
       const allPassed = true;
       
       if (allPassed) {
-        alert('Congratulations! Your solution has been submitted successfully.');
+        setTimerRunning(false);
+        setSolved(true);
+        
+        // Save completion data
+        const userData = localStorage.getItem('user');
+        const completionTime = formatTime(timer);
+        
+        if (userData) {
+          const user = JSON.parse(userData);
+          const completions = JSON.parse(localStorage.getItem('completions') || '[]');
+          completions.push({
+            challengeId: challenge.id,
+            userId: user.id,
+            username: user.username,
+            completionTime,
+            timestamp: new Date().toISOString()
+          });
+          localStorage.setItem('completions', JSON.stringify(completions));
+        }
+        
+        alert(`Congratulations! Your solution has been submitted successfully. Your time: ${completionTime}`);
       } else {
         alert('Your solution failed some test cases. Please fix and try again.');
       }
@@ -105,12 +160,19 @@ const Challenge = () => {
               ))}
             </div>
           </div>
-          <button 
-            className="btn btn-outline"
-            onClick={() => setShowLeaderboard(!showLeaderboard)}
-          >
-            {showLeaderboard ? 'Hide Leaderboard' : 'Show Leaderboard'}
-          </button>
+          <div className="challenge-actions">
+            {timerRunning && (
+              <div className="timer-display">
+                Time: {formatTime(timer)}
+              </div>
+            )}
+            <button 
+              className="btn btn-outline"
+              onClick={() => setShowLeaderboard(!showLeaderboard)}
+            >
+              {showLeaderboard ? 'Hide Leaderboard' : 'Show Leaderboard'}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -121,37 +183,50 @@ const Challenge = () => {
               </div>
               <div className="card-content">
                 <p>{challenge.description}</p>
+                
+                {!timerRunning && !solved && (
+                  <button 
+                    className="btn btn-primary mt-4"
+                    onClick={startSolving}
+                  >
+                    Start Solving
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="editor-container mb-8 fade-in">
-              <div className="editor-header">
-                <span>Python</span>
-                <div className="flex gap-2">
-                  <button 
-                    className="btn btn-outline" 
-                    onClick={runTests}
-                    disabled={isRunning}
-                  >
-                    {isRunning ? 'Running...' : 'Run Tests'}
-                  </button>
-                  <button 
-                    className="btn btn-primary" 
-                    onClick={handleSubmit}
-                    disabled={isSubmitting || isRunning}
-                  >
-                    {isSubmitting ? 'Submitting...' : 'Submit Solution'}
-                  </button>
+            {(timerRunning || solved) && (
+              <div className="editor-container mb-8 fade-in">
+                <div className="editor-header">
+                  <span>Python</span>
+                  <div className="flex gap-2">
+                    <button 
+                      className="btn btn-outline" 
+                      onClick={runTests}
+                      disabled={isRunning}
+                    >
+                      {isRunning ? 'Running...' : 'Run Tests'}
+                    </button>
+                    <button 
+                      className="btn btn-primary" 
+                      onClick={handleSubmit}
+                      disabled={isSubmitting || isRunning || solved}
+                    >
+                      {isSubmitting ? 'Submitting...' : solved ? 'Submitted' : 'Submit Solution'}
+                    </button>
+                  </div>
                 </div>
+                <CodeEditor
+                  value={code}
+                  onChange={setCode}
+                  language="python"
+                />
               </div>
-              <CodeEditor
-                value={code}
-                onChange={setCode}
-                language="python"
-              />
-            </div>
+            )}
 
-            <TestResults testCases={testResults} isRunning={isRunning} />
+            {(timerRunning || solved) && (
+              <TestResults testCases={testResults} isRunning={isRunning} />
+            )}
           </div>
           
           {showLeaderboard && (
